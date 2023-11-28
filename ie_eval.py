@@ -213,4 +213,3 @@ if __name__ == "__main__":
     output_file = args.output_path if args.shard_id is None else (args.output_path + "_" + str(args.shard_id) + ".json")
     with open(output_file, 'w') as f:
         json.dump(result_dict, f)
-    print(f"{float(sum(answers)) / len(answers)}")
