@@ -4,7 +4,8 @@ This fork of DoLa aims to
 
 - Support **LLaMA2** (transformers format, i.e. `TheBloke/Llama-2-7B-Chat-fp16` and so on)
     - Updated transformers to `4.35.2`. Make sure to use `pip install -e transformers-4.35.2`
-      instead of below instructions.
+      instead of below
+      instructions. [Seems to require torch > 2](https://github.com/huggingface/transformers/issues/25847)
     - Migrated DoLa related modifications and tested.
 
 - Support **Document Level Information Extraction** (`ie_eval.py`, etc.), a research focus of mine.
