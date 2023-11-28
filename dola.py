@@ -26,7 +26,7 @@ class DoLa:
         self.model, self.tokenizer = self.load_model(model_name)
 
     def load_model(self, model_name):
-        if self.device == "cuda":
+        if self.device == "cuda" or self.device == "mps":
             kwargs = {"torch_dtype": torch.float16, "offload_folder": f"{model_name}/offload"}
             if self.num_gpus == "auto":
                 kwargs["device_map"] = "auto"
@@ -48,7 +48,9 @@ class DoLa:
 
         if self.device == "cuda" and self.num_gpus == 1:
             model.cuda()
-        
+        if self.device == "mps":
+            model.to(torch.device("mps"))
+
         return model, tokenizer
 
     def set_stop_words(self, stop_words):
