@@ -30,6 +30,7 @@ DEBUG = True
 def load_jsonl(file_path,
                instruction='instruction',
                input='input',
+               id='docid',
                is_gzip=False):
     # Format of each line:
     # {'instruction': ..., 'input': ..., 'output':...}
@@ -40,6 +41,7 @@ def load_jsonl(file_path,
             item = json.loads(line)
             new_item = dict(
                 instruction=item[instruction] if instruction in item else None,
+                id=item[id] if id in item else None,
                 input=item[input] if input in item else None)
             item = new_item
             list_data_dict.append(item)
@@ -76,10 +78,38 @@ def download_url(url: str, folder='folder'):
 
 
 def build_prompt(input_text):
-    return (f"<s>[INST] <<SYS>> You are a helpful assistant. Output in JSON only.<</SYS>> original text: {input_text}\n"
-            "Given above text, there might be zero or more terrorist events in it. "
-            "If to fill [{\"incident_type\": \"attack\", \"PerpInd\": [...], \"PerpOrg\": [...], \"Target\": [...], \"Victim\": [...], \"Weapon\": [...]}] "
-            "for every event actual present, it would be [/INST]")
+    return (
+        "<s>[INST] <<SYS>> Output in JSON only without additional texts. "
+        "Use fewer linebreaks in output. <</SYS>> "
+        f"Original text: '{input_text}'\n"
+        "-----\nGiven above text, "
+        "there might be zero or more incidents of types "
+        "['kidnapping', 'attack', 'bombing', 'robbery', 'arson', 'forced work stoppage']. "
+        "Output a list of incidents. Describe PerpInd (Perpetrator Individual), PerpOrg (Perpetrator Organization), Target (non-people), Victim (people), Weapon"
+        "For every incident, fill one empty template dict "
+        "{\"incident_type\": '', \"PerpInd\": [], \"PerpOrg\": [], \"Target\": [], \"Victim\": [], \"Weapon\": []}. "
+        "Filler string must be short noun phrase exactly from original text and related to the incident. One string per entity."
+        "incident_type must one of the element from the list. "
+        "Strictly one template dict per incident, if any. Do not output an incident twice even if it fits two or more incident types"
+        "Use only one template for an incident that involves multiple PerpOrg, PerpInd, Weapon, Victim, Target."
+        "The output MUST be in valid JSON, a list of above template dictionary. "
+        "[/INST] JSON:")
+
+def build_prompt2(input_text):
+    return (
+        "<s>[INST] <<SYS>> Output in JSON only without additional texts. "
+        "Use fewer linebreaks in output. <</SYS>> "
+        f"Original text: '{input_text}'\n"
+        "-----\nGiven above text, "
+        "there might be zero or one incident of types"
+        "['kidnapping', 'attack', 'bombing', 'robbery', 'arson', 'forced work stoppage']. "
+        "Output one or zero incident. Describe PerpInd (Perpetrator Individual), PerpOrg (Perpetrator Organization), Target (non-people), Victim (people), Weapon"
+        "If there is an incident, fill the empty template dict "
+        "{\"incident_type\": '', \"PerpInd\": [], \"PerpOrg\": [], \"Target\": [], \"Victim\": [], \"Weapon\": []}. "
+        "Filler string must be short noun phrase exactly from original text and related to the incident. One string per entity."
+        "incident_type must one of the element from the list. "
+        "The output MUST be in valid JSON template dictionary or an empty JSON if none exists. "
+        "[/INST] JSON:")
 
 
 def clean_answer(model_pred):
@@ -116,14 +146,14 @@ if __name__ == "__main__":
     parser.add_argument("--parallel", action="store_true")
     parser.add_argument("--total-shard", type=int, default=8)
     parser.add_argument("--shard-id", type=int, default=None)
-    parser.add_argument("--max-new-tokens", type=int, default=256)
+    parser.add_argument("--max-new-tokens", type=int, default=512)
     parser.add_argument("--top_p", type=float, default=0.95)
     parser.add_argument("--top_k", type=int, default=0)
     parser.add_argument("--temperature", type=float, default=0.9)
     parser.add_argument("--repetition_penalty", type=float, default=None)
     parser.add_argument("--relative_top", type=float, default=0.1)
     parser.add_argument("--do_sample", action="store_true")
-    parser.add_argument("--do_shuffle", action="store_true")
+    parser.add_argument("--do_shuffle", action="store_true", default=False)
     parser.add_argument("--debug", action="store_true")
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--retry", type=int, default=1)
@@ -145,7 +175,7 @@ if __name__ == "__main__":
             args.data_path)
         os.rename(os.path.join(args.data_path, 'test.json'), fp)
 
-    list_data_dict = load_jsonl(fp, input='doctext')
+    list_data_dict = load_jsonl(fp, input='doctext', id='docid')
 
     if args.debug:
         list_data_dict = list_data_dict[:10]
@@ -189,8 +219,9 @@ if __name__ == "__main__":
                                repetition_penalty=args.repetition_penalty, mode=mode, mature_layer=mature_layer,
                                premature_layer=premature_layer, candidate_premature_layers=candidate_premature_layers,
                                relative_top=args.relative_top)
+        if DEBUG:
+            print(f'Full input_text:\n{input_text}\n\n')
         model_completion, c_dist = llm.generate(input_text, **generate_kwargs)
-        print("model_completion", model_completion)
         print("-----")
         if mode == "dola":
             for k, v in c_dist.items():
@@ -198,9 +229,7 @@ if __name__ == "__main__":
         result_dict['model_completion'].append(model_completion)
         result_dict['full_input_text'].append(input_text)
         result_dict['mode'].append(mode)
-        result_dict['early_exit_layers'].append(early_exit_layers)
-        if DEBUG:
-            print(f'Full input_text:\n{input_text}\n\n')
+        result_dict['early_exit_layers'].append([int(x) for x in args.early_exit_layers.split(',')])
 
     if mode == "dola" and args.debug:
         total_tokens = sum(premature_layer_dist.values())
