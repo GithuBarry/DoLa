@@ -12,9 +12,9 @@ from collections import defaultdict
 
 import numpy as np
 import torch
+import transformers
 from tqdm import tqdm
 
-import transformers
 from dola import DoLa
 
 transformers.logging.set_verbosity(40)
@@ -30,7 +30,6 @@ DEBUG = True
 def load_jsonl(file_path,
                instruction='instruction',
                input='input',
-               id='docid',
                is_gzip=False):
     # Format of each line:
     # {'instruction': ..., 'input': ..., 'output':...}
@@ -41,7 +40,6 @@ def load_jsonl(file_path,
             item = json.loads(line)
             new_item = dict(
                 instruction=item[instruction] if instruction in item else None,
-                id=item[id] if id in item else None,
                 input=item[input] if input in item else None)
             item = new_item
             list_data_dict.append(item)
@@ -93,9 +91,10 @@ def build_prompt(input_text):
         "Strictly one template dict per incident, if any. Do not output an incident twice even if it fits two or more incident types"
         "Use only one template for an incident that involves multiple PerpOrg, PerpInd, Weapon, Victim, Target."
         "The output MUST be in valid JSON, a list of above template dictionary. "
-        "[/INST] JSON:")
+        "[/INST] Here are the incidents described in the text in JSON:")
 
-def build_prompt2(input_text):
+
+def build_prompt_one_event(input_text):
     return (
         "<s>[INST] <<SYS>> Output in JSON only without additional texts. "
         "Use fewer linebreaks in output. <</SYS>> "
@@ -109,7 +108,121 @@ def build_prompt2(input_text):
         "Filler string must be short noun phrase exactly from original text and related to the incident. One string per entity."
         "incident_type must one of the element from the list. "
         "The output MUST be in valid JSON template dictionary or an empty JSON if none exists. "
-        "[/INST] JSON:")
+        "[/INST] Here are the incidents described in the text in JSON:")
+
+
+def build_prompt_few_shot(input_text):
+    return (
+        "<s>[INST]<<SYS>> Extract terrorist events only. `incident_type` must be one of "
+        "['kidnapping', 'attack', 'bombing', 'robbery', 'arson', 'forced work stoppage'][/INST]"
+        "<</SYS>>\n"
+        "INPUT: official sources have reported that several guerrilla attacks and heavy fighting took place the "
+        "evening of 9 january and this morning throughout the country, and as a result, three soldiers were killed "
+        "and three others injured.    alleged guerrilla urban commandos launched two highpower bombs against a car "
+        "dealership in downtown san salvador this morning.  a police report said that the attack set the building on "
+        "fire, but did not result in any casualties although economic losses are heavy.    during the evening of 9 "
+        "january, guerrilla urban commandos bombed two electricity facilities in different places in san salvador, "
+        "which caused power outages in some areas of the capital.    meanwhile, the armed forces press committee ("
+        "coprefa) reported today that three army soldiers were killed recently in clashes against members of the "
+        "farabundo marti national liberation front (fmln) in different parts of the central and eastern regions of "
+        "the country.    the war bulletin by coprefa stated that the clashes, in which three members of the general "
+        "juan ramon belloso battalion were injured, took place in san jose guayabal, in the central cuscatlan "
+        "department, and in santa elena in the eastern usulutan department.\n\n"
+        'OUTPUT: [{"incident_type": "bombing", "PerpInd": [["guerrilla urban commandos"]], "PerpOrg": [], '
+        '"Target": [["car dealership"]], "Victim": [], "Weapon": [["highpower bombs"]]}, '
+        '{"incident_type": "bombing", "PerpInd": [["guerrilla urban commandos"]], "PerpOrg": [], "Target": [['
+        '"electricity facilities"], "Victim": [], "Weapon": []}]\n'
+        "----\n"
+        "INPUT: a war bulletin indicates that on 6 january at 1625, fmln (farabundo marti national liberation front) "
+        "troops clashed with the cavalry company in finca santa elena, santa tecla, near san salvador, killing three "
+        "and wounding four enemy troops, including the patrol leader who was among those killed.  our troops seized "
+        "an m-14 rifle from the enemy, 3,000 cartridges for a 7.62-mm rifle, five knapsacks, six grenades, "
+        "and field equipment.\n\n"
+        "OUTPUT: []\n"
+        "----\n"
+        "INPUT: here is an official defense ministry communique:    1. at 0945 this morning, a group of subversives "
+        "conducted an armed terrorist attack against former defense minister divison general enrique lopez albujar, "
+        "retired.    2. the victim was taken to the air force hospital where he unfortunately passed away.    3. the "
+        "authorities are investigating the attack, and they are conducting the appropriate operations to capture the "
+        "criminals.    (dated and signed) lima, 9 january 1990.  defense ministry communications office.\n\n"
+        'OUTPUT: [{"incident_type": "attack", "PerpInd": [["group of subversives", "subversives"]], '
+        '"PerpOrg": [], "Target": [], "Victim": [["enrique lopez albujar"]], "Weapon": []}]\n'
+        "----\n"
+        f"INPUT: '{input_text}'\n\n"
+        "OUTPUT:")
+
+
+def build_prompt_few_shot_1max(input_text):
+    return (
+        "<s>[INST]<<SYS>> Extract terrorist events only. `incident_type` must be one of "
+        "['kidnapping', 'attack', 'bombing', 'robbery', 'arson', 'forced work stoppage'][/INST]"
+        "<</SYS>>\n"
+        "INPUT: a war bulletin indicates that on 6 january at 1625, fmln (farabundo marti national liberation front) "
+        "troops clashed with the cavalry company in finca santa elena, santa tecla, near san salvador, killing three "
+        "and wounding four enemy troops, including the patrol leader who was among those killed.  our troops seized "
+        "an m-14 rifle from the enemy, 3,000 cartridges for a 7.62-mm rifle, five knapsacks, six grenades, "
+        "and field equipment.\n\n"
+        "OUTPUT: []\n"
+        "----\n"
+        "INPUT: here is an official defense ministry communique:    1. at 0945 this morning, a group of subversives "
+        "conducted an armed terrorist attack against former defense minister divison general enrique lopez albujar, "
+        "retired.    2. the victim was taken to the air force hospital where he unfortunately passed away.    3. the "
+        "authorities are investigating the attack, and they are conducting the appropriate operations to capture the "
+        "criminals.    (dated and signed) lima, 9 january 1990.  defense ministry communications office.\n\n"
+        'OUTPUT: [{"incident_type": "attack", "PerpInd": [["group of subversives", "subversives"]], '
+        '"PerpOrg": [], "Target": [], "Victim": [["enrique lopez albujar"]], "Weapon": []}]\n'
+        "----\n"
+        f"INPUT: '{input_text}'\n\n"
+        "OUTPUT:")
+
+
+def build_prompt_combined(input_text):
+    return (
+        "<s>[INST]<<SYS>> Given above text, "
+        "there might be zero or more incidents of types "
+        "['kidnapping', 'attack', 'bombing', 'robbery', 'arson', 'forced work stoppage']. "
+        "Output a list of incidents. Describe PerpInd (Perpetrator Individual), PerpOrg (Perpetrator Organization), Target (non-people), Victim (people), Weapon"
+        "For every incident, fill one empty template dict "
+        "{\"incident_type\": '', \"PerpInd\": [], \"PerpOrg\": [], \"Target\": [], \"Victim\": [], \"Weapon\": []}. "
+        "Filler string must be short noun phrase exactly from original text and related to the incident. One string per entity."
+        "incident_type must one of the element from the list. "
+        "Strictly one template dict per incident, if any. Do not output an incident twice even if it fits two or more incident types"
+        "Use only one template for an incident that involves multiple PerpOrg, PerpInd, Weapon, Victim, Target.[/INST]"
+        "<</SYS>>\n"
+        "INPUT: official sources have reported that several guerrilla attacks and heavy fighting took place the "
+        "evening of 9 january and this morning throughout the country, and as a result, three soldiers were killed "
+        "and three others injured.    alleged guerrilla urban commandos launched two highpower bombs against a car "
+        "dealership in downtown san salvador this morning.  a police report said that the attack set the building on "
+        "fire, but did not result in any casualties although economic losses are heavy.    during the evening of 9 "
+        "january, guerrilla urban commandos bombed two electricity facilities in different places in san salvador, "
+        "which caused power outages in some areas of the capital.    meanwhile, the armed forces press committee ("
+        "coprefa) reported today that three army soldiers were killed recently in clashes against members of the "
+        "farabundo marti national liberation front (fmln) in different parts of the central and eastern regions of "
+        "the country.    the war bulletin by coprefa stated that the clashes, in which three members of the general "
+        "juan ramon belloso battalion were injured, took place in san jose guayabal, in the central cuscatlan "
+        "department, and in santa elena in the eastern usulutan department.\n\n"
+        'OUTPUT: [{"incident_type": "bombing", "PerpInd": [["guerrilla urban commandos"]], "PerpOrg": [], '
+        '"Target": [["car dealership"]], "Victim": [], "Weapon": [["highpower bombs"]]}, '
+        '{"incident_type": "bombing", "PerpInd": [["guerrilla urban commandos"]], "PerpOrg": [], "Target": [['
+        '"electricity facilities"], "Victim": [], "Weapon": []}]\n'
+        "----\n"
+        "INPUT: a war bulletin indicates that on 6 january at 1625, fmln (farabundo marti national liberation front) "
+        "troops clashed with the cavalry company in finca santa elena, santa tecla, near san salvador, killing three "
+        "and wounding four enemy troops, including the patrol leader who was among those killed.  our troops seized "
+        "an m-14 rifle from the enemy, 3,000 cartridges for a 7.62-mm rifle, five knapsacks, six grenades, "
+        "and field equipment.\n\n"
+        "OUTPUT: []\n"
+        "----\n"
+        "INPUT: here is an official defense ministry communique:    1. at 0945 this morning, a group of subversives "
+        "conducted an armed terrorist attack against former defense minister divison general enrique lopez albujar, "
+        "retired.    2. the victim was taken to the air force hospital where he unfortunately passed away.    3. the "
+        "authorities are investigating the attack, and they are conducting the appropriate operations to capture the "
+        "criminals.    (dated and signed) lima, 9 january 1990.  defense ministry communications office.\n\n"
+        'OUTPUT: [{"incident_type": "attack", "PerpInd": [["group of subversives", "subversives"]], '
+        '"PerpOrg": [], "Target": [], "Victim": [["enrique lopez albujar"]], "Weapon": []}]\n'
+        "----\n"
+        f"INPUT: '{input_text}'\n\n"
+        "OUTPUT:")
 
 
 def clean_answer(model_pred):
@@ -137,7 +250,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--model-name", type=str, default="TheBloke/Llama-2-7B-Chat-fp16")
     parser.add_argument("--num-gpus", type=str, default="1")
-    parser.add_argument("--max_gpu_memory", type=int, default=27)
+    parser.add_argument("--max_gpu_memory", type=int, default=45)
     parser.add_argument("--device", type=str, choices=["cuda", "cpu", "mps"], default="cuda")
     parser.add_argument("--data-path", type=str, default="./muc")
     parser.add_argument("--output-path", type=str, default="./muc_result")
@@ -152,15 +265,21 @@ if __name__ == "__main__":
     parser.add_argument("--temperature", type=float, default=0.9)
     parser.add_argument("--repetition_penalty", type=float, default=None)
     parser.add_argument("--relative_top", type=float, default=0.1)
-    parser.add_argument("--do_sample", action="store_true")
+    parser.add_argument("--do_sample", action="store_true", default=True)
     parser.add_argument("--do_shuffle", action="store_true", default=False)
     parser.add_argument("--debug", action="store_true")
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--retry", type=int, default=1)
+    parser.add_argument("--prompt_scheme", type=str, choices=["oneevent", "default", "fewshot", "fewshot_more", "combined"],
+                        default="default")
     args = parser.parse_args()
+    print("args", args)
     model_name = args.model_name
     num_gpus = args.num_gpus
     device = args.device
+
+    output_file = (args.output_path + "_" + args.prompt_scheme + "_" + args.model_name.split("/")[
+        -1] + "_" + args.early_exit_layers + ".json")
 
     # Get test file
     if not '.jsonl' in args.data_path:
@@ -175,13 +294,13 @@ if __name__ == "__main__":
             args.data_path)
         os.rename(os.path.join(args.data_path, 'test.json'), fp)
 
-    list_data_dict = load_jsonl(fp, input='doctext', id='docid')
+    list_data_dict = load_jsonl(fp, input='doctext')
 
     if args.debug:
         list_data_dict = list_data_dict[:10]
 
     llm = DoLa(model_name, device, num_gpus, args.max_gpu_memory)
-    # llm.set_stop_words(["Q:", "\end{code}"])
+
     early_exit_layers = [int(x) for x in args.early_exit_layers.split(',')]
     if len(early_exit_layers) == 1:
         print("MODE: naive decoding from the last layer", flush=True)
@@ -213,7 +332,21 @@ if __name__ == "__main__":
     answers = []
     result_dict = defaultdict(list)
     for sample in tqdm(list_data_dict):
-        input_text = build_prompt(sample['input'])
+        if args.prompt_scheme == "default":
+            input_text = build_prompt(sample['input'])
+        elif args.prompt_scheme == "oneevent":
+            input_text = build_prompt_one_event(sample['input'])
+        elif args.prompt_scheme == "fewshot":
+            llm.set_stop_words(["INPUT:"])
+            input_text = build_prompt_few_shot_1max(sample['input'])
+        elif args.prompt_scheme == "fewshot_more":
+            llm.set_stop_words(["INPUT:"])
+            input_text = build_prompt_few_shot(sample['input'])
+        elif args.prompt_scheme == "combined":
+            llm.set_stop_words(["INPUT:"])
+            input_text = build_prompt_combined(sample['input'])
+        else:
+            raise Exception
         generate_kwargs = dict(max_new_tokens=args.max_new_tokens, do_sample=args.do_sample, top_p=args.top_p,
                                top_k=args.top_k, temperature=args.temperature,
                                repetition_penalty=args.repetition_penalty, mode=mode, mature_layer=mature_layer,
@@ -231,6 +364,9 @@ if __name__ == "__main__":
         result_dict['mode'].append(mode)
         result_dict['early_exit_layers'].append([int(x) for x in args.early_exit_layers.split(',')])
 
+        with open(output_file, 'w') as f:
+            json.dump(result_dict, f)
+
     if mode == "dola" and args.debug:
         total_tokens = sum(premature_layer_dist.values())
         if total_tokens > 0:
@@ -239,6 +375,5 @@ if __name__ == "__main__":
                     premature_layer_dist[l] / total_tokens * 100, 2)))
     # save results to a json file
     model_tag = model_name.split('/')[-1] if model_name[-1] != '/' else model_name.split('/')[-2]
-    output_file = args.output_path if args.shard_id is None else (args.output_path + "_" + str(args.shard_id) + ".json")
     with open(output_file, 'w') as f:
         json.dump(result_dict, f)
